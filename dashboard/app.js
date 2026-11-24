@@ -105,6 +105,26 @@
     if (s.length < 20) s = s + " Hold the position and check the protocol's own page.";
     return s;
   }
+  // The weekly action and the claim step, word for word the same as lib/model.ts: the drawer
+  // regenerates the plan board.json carries, so the two derivations must agree exactly.
+  function weeklyActionFor(p) {
+    var c = (p.category || '').toLowerCase();
+    var name = p.name;
+    if (c.indexOf('lend') >= 0 || c.indexOf('cdp') >= 0 || c.indexOf('collateral') >= 0) return 'Add a small top-up to your ' + name + ' position each week, or repay a slice of the borrow, so the position stays active.';
+    if (c.indexOf('dex') >= 0 || c.indexOf('yield') >= 0 || c.indexOf('leveraged farm') >= 0) return 'Top up or rebalance your ' + name + ' pool position once a week so the liquidity stays in range.';
+    if (c.indexOf('bridge') >= 0) return 'Bridge a small amount through ' + name + ' once a week so the route stays warm.';
+    if (c.indexOf('staking') >= 0 || c.indexOf('restak') >= 0) return "Restake the week's rewards through " + name + ' once a week so the stake compounds.';
+    if (c.indexOf('perpetual') >= 0 || c.indexOf('derivative') >= 0) return 'Roll the hedge or place one small trade on ' + name + ' each week to keep the account active.';
+    if (c.indexOf('prediction') >= 0) return 'Place one small position on ' + name + ' each week while the market is live.';
+    if (c.indexOf('curator') >= 0 || c.indexOf('allocator') >= 0) return 'Top up the ' + name + ' vault or move between its vaults once a week as the allocation changes.';
+    if (c.indexOf('stable') >= 0) return 'Mint or redeem a small amount through ' + name + ' each week so the position is not idle.';
+    if (c.indexOf('rwa') >= 0) return 'Check the yield accrual on ' + name + ' and top up the position once a week.';
+    if (c.indexOf('insurance') >= 0) return 'Review the ' + name + ' cover and renew or top it up once a week while it runs.';
+    return 'Make one qualifying action on ' + name + ' each week, such as a deposit, a borrow, a swap or a vote.';
+  }
+  function claimFor(p, chain) {
+    return "Before you withdraw, open " + p.name + "'s own points or rewards page on " + chain + ' and claim only from the link it publishes.';
+  }
   function farmSteps(p) {
     var chain = chainOf(p);
     var gas = gasFor(chain);
@@ -113,9 +133,9 @@
     return [
       { text: 'Use a fresh wallet that holds only the funds you plan to farm, and keep its seed phrase offline.', cost: gas.setup + ' for the first transaction', time: '5 minutes' },
       { text: actionFor(p, capital, chain), cost: '$' + capital + ' of capital and ' + gas.setup, time: '15 minutes to set up' },
-      { text: 'Make one qualifying action each week, such as a deposit, a borrow, a swap or a vote.', cost: gas.weekly, time: '10 minutes a week' },
+      { text: weeklyActionFor(p), cost: gas.weekly, time: '10 minutes a week' },
       { text: 'Hold the position for at least ' + hold + ' days so the activity is counted in more than one snapshot.', cost: 'the $' + capital + ' stays in the position', time: hold + ' days' },
-      { text: "Before you withdraw, open the protocol's own points or rewards page and claim only from the link it publishes.", cost: 'no fee to check, and never pay to claim', time: '10 minutes' },
+      { text: claimFor(p, chain), cost: 'no fee to check, and never pay to claim', time: '10 minutes' },
       { text: 'Write the wallet, the dates and every transaction in a farm log so you can repeat the position or unwind it.', cost: 'nothing but the log', time: '5 minutes' }
     ].map(stepText);
   }
@@ -185,18 +205,27 @@
   }
 
   function lede() {
+    // Every headline fact is computed here from the rows, not carried: the coverage count is a count
+    // of board rows on the watchlist, and the totals are sums over the board.
+    var watchlist = {};
+    DATA.watchlist.forEach(function (s) { watchlist[s] = true; });
+    var covered = DATA.rows.filter(function (r) { return watchlist[r.slug]; }).length;
+    var early = DATA.rows.filter(function (r) { return r.band === 'early'; }).length;
+    var above = DATA.rows.filter(function (r) { return r.band === 'above'; }).length;
+    var total = DATA.rows.reduce(function (n, r) { return n + r.implied_value_usd; }, 0);
     return el('section', { class: 'lede' },
       el('div', null,
         el('div', { class: 'kicker', text: 'Pre-token protocols · ranked by implied value' }),
         el('h1', { text: 'Which token launch is worth farming next?' }),
-        el('p', { text: 'The watchlist is the floor: every protocol with at least $' + Math.round(DATA.floor_usd / 1e6) + 'M of TVL and no token on record. The early radar adds ' + DATA.early_size + ' pre-token protocols below that floor. Implied value is calibrated on the market caps of live tokens in the same category, so it is a model, not a promise.' })
+        el('p', { text: 'The house watchlist is the floor: ' + DATA.watchlist.length + ' pre-token protocols at or above $' + Math.round(DATA.floor_usd / 1e6) + 'M of TVL that are not wrapped, staked or bridged products. The radar adds every other genuine pre-token protocol in the snapshot: ' + early + ' below that floor and ' + above + ' above it that the watchlist leaves out. Implied value is calibrated on the market caps of live tokens in the same category, so it is a model, not a promise.' })
       ),
       el('div', { class: 'facts' },
-        el('div', { class: 'fact' }, el('span', { text: 'Watchlist covered' }), el('b', { text: DATA.watchlist_size + ' / ' + DATA.watchlist_size })),
-        el('div', { class: 'fact' }, el('span', { text: 'Pre-token rows scored' }), el('b', { text: String(DATA.board_size) })),
-        el('div', { class: 'fact' }, el('span', { text: 'Early rows below the floor' }), el('b', { text: String(DATA.early_size) })),
-        el('div', { class: 'fact' }, el('span', { text: 'Total implied value' }), el('b', { text: fmtUsd(DATA.total_implied_usd) })),
-        el('div', { class: 'fact' }, el('span', { text: 'Live-token protocols set aside' }), el('b', { text: String(DATA.live_size) }))
+        el('div', { class: 'fact' }, el('span', { text: 'Watchlist covered' }), el('b', { text: covered + ' / ' + DATA.watchlist.length })),
+        el('div', { class: 'fact' }, el('span', { text: 'Pre-token rows scored' }), el('b', { text: String(DATA.rows.length) })),
+        el('div', { class: 'fact' }, el('span', { text: 'Early rows below the floor' }), el('b', { text: String(early) })),
+        el('div', { class: 'fact' }, el('span', { text: 'Above the floor, off the list' }), el('b', { text: String(above) })),
+        el('div', { class: 'fact' }, el('span', { text: 'Total implied value' }), el('b', { text: fmtUsd(total) })),
+        el('div', { class: 'fact' }, el('span', { text: 'Live-token protocols set aside' }), el('b', { text: String(DATA.live.length) }))
       )
     );
   }
@@ -268,7 +297,7 @@
       },
         el('td', null, el('span', { class: 'rank-badge', text: String(r.rank) })),
         el('td', null, el('div', { class: 'name' },
-          el('div', null, el('b', { text: r.name }), r.early ? el('span', { class: 'tag-early', text: 'early' }) : null),
+          el('div', null, el('b', { text: r.name }), r.band === 'early' ? el('span', { class: 'tag-early', text: 'early' }) : r.band === 'above' ? el('span', { class: 'tag-above', text: 'above floor' }) : null),
           el('span', { class: 'sub', text: (r.category || 'Other') + ' on ' + (r.chains && r.chains.length ? r.chains.slice(0, 2).join(', ') : 'an unnamed chain') })
         )),
         el('td', { class: 'num', text: fmtUsd(r.tvl_usd) }),
@@ -385,7 +414,7 @@
 
   function foot() {
     return el('footer', { class: 'foot' },
-      el('span', { text: 'Data: DefiLlama protocol index, snapshot ' + DATA.as_of + ', ' + DATA.watchlist_size + ' watchlist protocols of 758 tracked at or above $5M TVL. The board says a protocol records no token, never that it has none: the snapshot is DefiLlama\u2019s record, not proof.' }),
+      el('span', { text: 'Data: DefiLlama protocol index, snapshot ' + DATA.as_of + ', ' + DATA.watchlist.length + ' watchlist protocols of 758 tracked at or above $5M TVL. The board says a protocol records no token, never that it has none: the snapshot is DefiLlama\u2019s record, not proof.' }),
       el('span', { text: 'Implied value is this entry\u2019s own claim from the snapshot\u2019s figures. It is not a price, not a prediction of a launch, and not financial advice.' })
     );
   }
@@ -406,7 +435,7 @@
       : 'No live token in the ' + (row.category || 'Other') + ' category trades, so this row uses the global median ' + DATA.calibration.global_multiple.toFixed(2) + 'x over ' + DATA.calibration.global_comps + ' live tokens.';
     dialog.appendChild(el('div', { class: 'detail-head' },
       el('div', null,
-        el('span', { class: 'brand-name', text: 'Rank ' + row.rank + ' of ' + DATA.board_size + (row.early ? ' · early radar' : ' · watchlist') }),
+        el('span', { class: 'brand-name', text: 'Rank ' + row.rank + ' of ' + DATA.rows.length + (row.band === 'early' ? ' · early radar' : row.band === 'above' ? ' · above the floor' : ' · watchlist') }),
         el('h2', { id: 'detail-title', text: row.name }),
         el('p', { class: 'sub', text: (row.category || 'Other') + ' on ' + (row.chains && row.chains.length ? row.chains.join(', ') : 'an unnamed chain') })
       ),
