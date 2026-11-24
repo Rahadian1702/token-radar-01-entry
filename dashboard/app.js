@@ -1,4 +1,4 @@
-// Token Radar's dashboard (radar-3). It reads window.RADAR (written beside dashboard/ by main.ts)
+// Token Radar's dashboard (radar-4). It reads window.RADAR (written beside dashboard/ by main.ts)
 // and renders the ranked board, the ledger of all 758 protocols, the odds, ranges and farm verdicts,
 // a per-protocol detail drawer, and the held-out tests behind both fitted models. No network: every
 // byte it shows is in data.js. No outside address appears anywhere here.
@@ -201,6 +201,9 @@
     var o = DATA.odds_model;
     var keptValue = v.terms.filter(function (t) { return t.status === 'kept'; }).length;
     var keptOdds = o.terms.filter(function (t) { return t.status === 'kept'; }).length;
+    // The scenario summary is live: it counts the rows whose farm verdict is FARM at the current
+    // deposit, drop share and horizon, so it stays true when the reader moves the controls.
+    var farmCounts = verdictCounts();
     return el('section', { class: 'lede' },
       el('div', null,
         el('div', { class: 'kicker', text: 'Pre-token protocols · ranked by implied value' }),
@@ -214,7 +217,8 @@
         el('div', { class: 'fact' }, el('span', { text: 'Typical miss, out of sample' }), el('b', { text: 'x' + v.loo_miss.toFixed(2) + ' / x' + v.wf_miss.toFixed(2) })),
         el('div', { class: 'fact' }, el('span', { text: 'Range honesty, P25–P75 / P10–P90' }), el('b', { text: Math.round(100 * v.range_cover_2575 / v.range_n) + '% / ' + Math.round(100 * v.range_cover_1090 / v.range_n) + '%' })),
         el('div', { class: 'fact' }, el('span', { text: 'Token odds, Brier' }), el('b', { text: o.loo_brier.toFixed(3) + ' vs ' + o.base_loo_brier.toFixed(3) })),
-        el('div', { class: 'fact' }, el('span', { text: 'Terms kept, both tests' }), el('b', { text: keptValue + ' of ' + (v.terms.length - 2) + ' · ' + keptOdds + ' of ' + (o.terms.length - 2) }))
+        el('div', { class: 'fact' }, el('span', { text: 'Terms kept, both tests' }), el('b', { text: keptValue + ' of ' + (v.terms.length - 2) + ' · ' + keptOdds + ' of ' + (o.terms.length - 2) })),
+        el('div', { class: 'fact' }, el('span', { text: 'Worth farming, this scenario' }), el('b', { text: farmCounts.FARM + ' of ' + DATA.rows.length }))
       )
     );
   }
