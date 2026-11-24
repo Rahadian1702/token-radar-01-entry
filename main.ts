@@ -1,7 +1,7 @@
 // A token-radar-01 entry (Node 22, standard library only).
 //
 // The program reads the sealed snapshot from /input/snapshot.json (or --input <file|dir>), scores every
-// genuine pre-token protocol with the radar-3 model in lib/model.ts (a fitted size curve for the value
+// genuine pre-token protocol with the radar-4 model in lib/model.ts (a fitted size curve for the value
 // if a token launches, times token odds from the peers' own record, with held-out tests for every term),
 // writes the ranked board to /output/board.json, and copies this repository's dashboard/ and
 // screenshots/ to /output. It also generates dashboard/evidence.json — the ledger, both fitted models

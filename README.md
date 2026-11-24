@@ -4,16 +4,16 @@
 [![rank](https://make.fun/badge/token-radar-01/Rahadian1702/token-radar-01-entry/rank.svg)](https://make.fun/bounty/token-radar-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
 [![reward](https://make.fun/badge/token-radar-01/Rahadian1702/token-radar-01-entry/reward.svg)](https://make.fun/bounty/token-radar-01?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
 
-A token launch radar: every genuine pre-token protocol in the sealed DefiLlama snapshot, ranked by an implied value calibrated on the market caps of live tokens in the same category, with a concrete farm plan for each one. The board covers the whole 40-protocol watchlist plus 138 early pre-token protocols below the $50M floor and 19 above it that the watchlist leaves out — wrapped, staked and bridged products are excluded, since they have no token launch to rank — and the dashboard is a static page that renders with no network.
+A token launch radar: every genuine pre-token protocol in the sealed DefiLlama snapshot, ranked by an implied value calibrated on the market caps of live tokens in the same category, with a concrete farm plan for each one. The board covers the whole 40-protocol watchlist plus 138 early pre-token protocols below the $50M floor and 20 above it that the watchlist leaves out — wrapped, staked and bridged products are excluded, since they have no token launch to rank — and the dashboard is a static page that renders with no network.
 
-## The model (radar-3)
+## The model (radar-4)
 
-Implied value follows only from the snapshot's own figures, and it is now two fits, not one. The value fit prices a token if it launches: log(market cap / TVL) against log TVL on the snapshot's 128 live-token comps, a size curve — the market pays less per TVL dollar as protocols grow. The odds fit is a logistic regression on the 447 dated peers, giving the chance a protocol records a token at all, from how long it has run, its TVL and its seven-day growth. Implied value is the two together:
+Implied value follows only from the snapshot's own figures, and it is now two fits, not one. The value fit prices a token if it launches: log(market cap / TVL) against log TVL on the snapshot's 128 live-token comps, a size curve — the market pays less per TVL dollar as protocols grow. The odds fit is a logistic regression on the 453 dated peers, giving the chance a protocol records a token at all, from how long it has run, its TVL and its seven-day growth. Implied value is the two together:
 
 ```
 multiple(tvl) = exp(-1.84 - 0.48 x ln(tvl / $100M))
 if_it_launches = tvl_usd x multiple(tvl)
-odds = 1 / (1 + exp(-(-1.01 + 0.69 x years_listed + 0.22 x ln(tvl / $100M) - 2.49 x growth_7d)))
+odds = 1 / (1 + exp(-(-1.01 + 0.70 x years_listed + 0.22 x ln(tvl / $100M) - 2.48 x growth_7d)))
 implied = round(if_it_launches x odds)
 ```
 
@@ -25,12 +25,12 @@ Growth is the seven-day TVL change as a fraction, clamped to [-0.6, 1.2]; age de
 mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts --input /path/to/snapshot.json
 ```
 
-Node 22 or later, standard library only, no install. The program writes `board.json` (197 ranked rows), `data.js`, `dashboard/` (including a generated `evidence.json` with the ledger, both models with their held-out tests, the top rows and the top farm plans, so the dossier carries real numbers), `screenshots/` and `dossier.json` to the output directory. Open `out/dashboard/index.html` to use the board; it needs `data.js` beside `dashboard/`.
+Node 22 or later, standard library only, no install. The program writes `board.json` (198 ranked rows), `data.js`, `dashboard/` (including a generated `evidence.json` with the ledger, both models with their held-out tests, the top rows and the top farm plans, so the dossier carries real numbers), `screenshots/` and `dossier.json` to the output directory. Open `out/dashboard/index.html` to use the board; it needs `data.js` beside `dashboard/`.
 
 ## Layout
 
 - `main.ts` — the entrypoint: reads the snapshot, scores the board, writes the output.
-- `lib/model.ts` — the radar-3 model, the odds and value fits, the ledger, the farm plans and the gate checks.
+- `lib/model.ts` — the radar-4 model, the odds and value fits, the ledger, the farm plans and the gate checks.
 - `vendor/makefun-board.ts` — make.fun's dossier library, vendored byte for byte from the kit.
 - `dashboard/` — the static page: `index.html`, `app.css`, `app.js`.
 - `screenshots/` — the board, a protocol detail view, a filtered view and the model panel, captured from this dashboard.
