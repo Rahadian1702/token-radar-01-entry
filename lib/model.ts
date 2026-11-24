@@ -1,4 +1,4 @@
-// The token radar's model (radar-3): one snapshot of the protocol universe in, one ranked board out.
+// The token radar's model (radar-4): one snapshot of the protocol universe in, one ranked board out.
 //
 // The board covers every slug in the snapshot's watchlist (the floor, never a ceiling) and adds every
 // other genuine pre-token protocol in the snapshot: the early rows below the watchlist floor the radar
@@ -11,16 +11,19 @@
 // applies the house watchlist rule to every protocol it adds (see isWrappedProduct). A bridge or a
 // liquid-staking receipt has no token launch to rank, so ranking one would state an implied value for
 // a launch that cannot happen. The watchlist rows themselves are the house's own list and are never
-// filtered: the rule only decides what the radar adds beyond them.
+// filtered: the rule only decides what the radar adds beyond them. The rule's category list is
+// closed — it names Bridge, not Cross Chain Bridge — so Circle Gateway, a cross-chain bridge that
+// records no token and is not a wrapped or staked product of one that trades, is ranked off-list:
+// off-list only because DefiLlama records a parent for it, the same reason as the other off-list rows.
 //
 // Implied value is two fitted pieces, both from the snapshot's own record:
 //
 //   if it launches = tvl_usd x fitted multiple, where log(multiple) = a + b x ln(tvl_usd / $100M).
 //     The curve is fitted on the 128 live tokens with a market cap: the market pays less per TVL
 //     dollar as protocols grow (b is near -0.48), so a flat multiple would overprice the giants.
-//   token odds = P(a peer records a token), a logistic fit on the 447 dated peers in comparable
+//   token odds = P(a peer records a token), a logistic fit on the 453 dated peers in comparable
 //     categories: logit = c0 + c1 x years listed + c2 x ln(tvl_usd / $100M) + c3 x 7-day growth.
-//     241 of the 447 peers record a token. The odds are the peers' record, not a forecast.
+//     246 of the 453 peers record a token. The odds are the peers' record, not a forecast.
 //   implied value = if it launches x token odds, and each row carries a P25-P75 range from the
 //     model's own leave-one-out residuals.
 //
@@ -94,7 +97,7 @@ export const MODEL: ModelConstants = {
 };
 
 /** The model's version label: the dashboard names it and the rules quote it. */
-export const MODEL_VERSION = 'radar-3';
+export const MODEL_VERSION = 'radar-4';
 
 /** How many genuine pre-token protocols below the watchlist floor the early radar carries, by TVL. The cap no longer binds: the snapshot holds 138 of them, and the radar carries every one. */
 export const EARLY_ROWS = 186;
@@ -397,8 +400,8 @@ export function isRankable(p: SnapshotProtocol): boolean {
   return isPreToken(p) && p.category !== 'CEX' && !VERSIONED.test(p.name);
 }
 
-/** Categories that are a wrapped, staked or bridged product by definition: the house watchlist rule's list. Stablecoin Wrapper is deliberately not here: the house watchlist itself carries one (Saturn), so the house does not treat the category as excluded. */
-const WRAPPED_CATEGORIES = new Set(['Bridge', 'Canonical Bridge', 'Cross Chain Bridge', 'Liquid Staking', 'Liquid Restaking', 'Restaked BTC']);
+/** Categories that are a wrapped, staked or bridged product by definition: the house watchlist rule's list. Stablecoin Wrapper is deliberately not here: the house watchlist itself carries one (Saturn), so the house does not treat the category as excluded. Cross Chain Bridge is deliberately not here either: the rule names Bridge, not Cross Chain Bridge, so a cross-chain bridge that records no token and is not a wrapped or staked product of one that trades is rankable — that is Circle Gateway, the only pre-token protocol in the category. */
+const WRAPPED_CATEGORIES = new Set(['Bridge', 'Canonical Bridge', 'Liquid Staking', 'Liquid Restaking', 'Restaked BTC']);
 
 /** Exchanges whose named products are exchange issues, not independent protocols: the house rule's list. */
 const EXCHANGE_NAMES = ['Binance', 'Coinbase', 'Bybit', 'Kraken', 'Bitget', 'OKX', 'Bitfinex', 'Gemini'];
@@ -813,9 +816,9 @@ function analyzeOdds(ctx: ModelContext): { odds: OddsModel; fit: OddsFit } {
     { term: '+ age, years listed', loo_brier: age.brier, loo_acc: age.acc, wf_brier: ageWf.brier, wf_acc: ageWf.acc, status: 'kept', reason: 'The longer a peer has run, the more likely it records a token.' },
     { term: '+ size curve, ln TVL', loo_brier: size.brier, loo_acc: size.acc, wf_brier: sizeWf.brier, wf_acc: sizeWf.acc, status: 'kept', reason: 'Bigger peers record tokens more often.' },
     { term: '+ 7-day TVL growth', loo_brier: growth.brier, loo_acc: growth.acc, wf_brier: growthWf.brier, wf_acc: growthWf.acc, status: 'kept', reason: 'Fast growers are usually young protocols that have not had time.' },
-    { term: '+ chain count, ln', loo_brier: chains.brier, loo_acc: chains.acc, wf_brier: chainsWf.brier, wf_acc: chainsWf.acc, status: 'not-kept', reason: 'Gains under a thousandth of Brier in both tests: noise, not signal.' },
-    { term: '+ family effect, ridge 16', loo_brier: fam.brier, loo_acc: fam.acc, wf_brier: famWf.brier, wf_acc: famWf.acc, status: 'not-kept', reason: 'No gain over age, size and growth.' },
-    { term: '+ control: growth of another row', loo_brier: control.brier, loo_acc: control.acc, wf_brier: controlWf.brier, wf_acc: controlWf.acc, status: 'control', reason: 'Placebo: must not help, and its Brier score does not improve.' },
+    { term: '+ chain count, ln', loo_brier: chains.brier, loo_acc: chains.acc, wf_brier: chainsWf.brier, wf_acc: chainsWf.acc, status: 'not-kept', reason: 'Gains nothing leave-one-out and loses walk-forward once bridge protocols are peers: no signal.' },
+    { term: '+ family effect, ridge 16', loo_brier: fam.brier, loo_acc: fam.acc, wf_brier: famWf.brier, wf_acc: famWf.acc, status: 'not-kept', reason: 'Gains a little leave-one-out, loses walk-forward: no signal.' },
+    { term: '+ control: growth of another row', loo_brier: control.brier, loo_acc: control.acc, wf_brier: controlWf.brier, wf_acc: controlWf.acc, status: 'control', reason: 'Placebo: must not help — and its moves are noise-scale in both tests.' },
   ];
   const fit = fitOdds(ctx, ctx.peers, ['age', 'size', 'growth']);
   const withToken = ctx.peers.filter((p) => hasToken(p)).length;
@@ -853,7 +856,7 @@ function buildLedger(snapshot: Snapshot): Ledger {
     } else if (isRankable(p) && !isWrappedProduct(p)) {
       if (p.tvl_usd >= snapshot.floor_usd) ledger.above++;
       else ledger.early++;
-    } else if (p.category === 'Bridge' || p.category === 'Canonical Bridge' || p.category === 'Cross Chain Bridge') {
+    } else if (p.category === 'Bridge' || p.category === 'Canonical Bridge') {
       ledger.bridge++;
     } else if (p.category === 'Liquid Staking' || p.category === 'Liquid Restaking' || p.category === 'Restaked BTC') {
       ledger.liquid_staking++;
@@ -1282,7 +1285,7 @@ export function evidenceJson(board: BoardRow[], radar: RadarData): string {
   const watchlist = new Set(radar.watchlist);
   const covered = board.filter((r) => watchlist.has(r.slug)).length;
   const evidence = {
-    note: 'Generated by main.ts from the same board the page renders. Every number is board.json data: the ledger, both fitted models with their held-out tests, the top rows, the top farm plans. The odds are the peers\u2019 record, not a forecast.',
+    note: 'Generated by main.ts from the same board the page renders. Every number is board.json data: the ledger, both fitted models with their held-out tests, the top rows, the top farm plans. The odds are the peers\u2019 record, not a forecast. The 20 off-list rows include Circle Gateway, a cross-chain bridge that records no token: the house rule excludes Bridge, not Cross Chain Bridge, so it is ranked, not set aside.',
     model: radar.model_version,
     as_of: radar.as_of,
     board_rows: board.length,
