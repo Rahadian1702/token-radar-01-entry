@@ -1,12 +1,13 @@
 // A token-radar-01 entry (Node 22, standard library only).
 //
 // The program reads the sealed snapshot from /input/snapshot.json (or --input <file|dir>), scores every
-// genuine pre-token protocol with the radar-2 model in lib/model.ts (category-calibrated multiples from
-// the snapshot's own live-token set, seven-day growth, age with no token), writes the ranked board to
-// /output/board.json, and copies this repository's dashboard/ and screenshots/ to /output. It also
-// generates dashboard/evidence.json — the calibration, the top rows and the top farm plans, from the
-// same board — so the dossier carries real numbers. Last, it writes /output/dossier.json, the summary
-// the judge reads, with the vendored make.fun library.
+// genuine pre-token protocol with the radar-3 model in lib/model.ts (a fitted size curve for the value
+// if a token launches, times token odds from the peers' own record, with held-out tests for every term),
+// writes the ranked board to /output/board.json, and copies this repository's dashboard/ and
+// screenshots/ to /output. It also generates dashboard/evidence.json — the ledger, both fitted models
+// with their term tables, the top rows and the top farm plans, from the same board — so the dossier
+// carries real numbers. Last, it writes /output/dossier.json, the summary the judge reads, with the
+// vendored make.fun library.
 //
 // The dashboard is a static page, no framework and no network: dashboard/index.html, dashboard/app.css
 // and dashboard/app.js read /output/data.js, which this program writes from the same board.
@@ -72,7 +73,7 @@ function copyFiles(from: string, to: string): string[] {
 
 const dashFiles = copyFiles(join(here, 'dashboard'), join(out, 'dashboard'));
 // The evidence file is generated, never copied: it is the board's numbers in dashboard/ source, so
-// the dossier the judge reads carries real rows, the calibration and real farm plans.
+// the dossier the judge reads carries real rows, both fitted models and real farm plans.
 writeFileSync(join(out, 'dashboard', 'evidence.json'), evidenceJson(board, radar));
 const shots = copyFiles(join(here, 'screenshots'), join(out, 'screenshots'));
 if (shots.length < 3) {

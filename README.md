@@ -6,17 +6,18 @@
 
 A token launch radar: every genuine pre-token protocol in the sealed DefiLlama snapshot, ranked by an implied value calibrated on the market caps of live tokens in the same category, with a concrete farm plan for each one. The board covers the whole 40-protocol watchlist plus 138 early pre-token protocols below the $50M floor and 19 above it that the watchlist leaves out — wrapped, staked and bridged products are excluded, since they have no token launch to rank — and the dashboard is a static page that renders with no network.
 
-## The model (radar-2)
+## The model (radar-3)
 
-Implied value follows only from the snapshot's own figures. The multiple is not a flat guess: for each category it is the median market-cap-per-TVL of the live tokens in that category, clamped to [0.05, 1.5] and shrunk toward the global median with a prior of strength 3, so a thin category cannot set its own multiple from one observation. Categories with no live tokens take the global median.
+Implied value follows only from the snapshot's own figures, and it is now two fits, not one. The value fit prices a token if it launches: log(market cap / TVL) against log TVL on the snapshot's 128 live-token comps, a size curve — the market pays less per TVL dollar as protocols grow. The odds fit is a logistic regression on the 447 dated peers, giving the chance a protocol records a token at all, from how long it has run, its TVL and its seven-day growth. Implied value is the two together:
 
 ```
-multiple(category) = (n x median(mcap / tvl of live tokens in the category) + 3 x global_median) / (n + 3)
-implied = round( tvl_usd x multiple(category) x (1 + clamp(change_7d, -60, 120) / 100 x 0.5)
-                 x (0.6 + min(age_days, 1095) / 1095 x 0.4) )
+multiple(tvl) = exp(-1.84 - 0.48 x ln(tvl / $100M))
+if_it_launches = tvl_usd x multiple(tvl)
+odds = 1 / (1 + exp(-(-1.01 + 0.69 x years_listed + 0.22 x ln(tvl / $100M) - 2.49 x growth_7d)))
+implied = round(if_it_launches x odds)
 ```
 
-Growth is the protocol's seven-day TVL change; age is the time since it was first listed, the best record of how long it has run with no token. No protocol name is special-cased. The dashboard states every multiple with its comp count, recomputes each row in the page, and ships a what-if sandbox for the two weights.
+Growth is the seven-day TVL change as a fraction, clamped to [-0.6, 1.2]; age defaults to one year when the listing date is unknown. Every candidate term was tested and the page publishes the table: category, growth, age and chains were all tried in the value fit and kept out, because none lowers the held-out miss in both tests (leave-one-out, and walk-forward, where the tokens listed before 2025 price the ones listed after). The typical leave-one-out miss is about x3.4, against x4.8 for one flat multiple. Each row also carries a P25–P75 range from the leave-one-out residuals, and a farm verdict — FARM, MARGINAL or SKIP — scored net of fees at a stated deposit, drop share and horizon. The odds describe the peers' record, not a forecast: the page never says a token will launch. No protocol name is special-cased.
 
 ## Run it
 
@@ -24,12 +25,12 @@ Growth is the protocol's seven-day TVL change; age is the time since it was firs
 mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts --input /path/to/snapshot.json
 ```
 
-Node 22 or later, standard library only, no install. The program writes `board.json` (197 ranked rows), `data.js`, `dashboard/` (including a generated `evidence.json` with the calibration, the top rows and the top farm plans, so the dossier carries real numbers), `screenshots/` and `dossier.json` to the output directory. Open `out/dashboard/index.html` to use the board; it needs `data.js` beside `dashboard/`.
+Node 22 or later, standard library only, no install. The program writes `board.json` (197 ranked rows), `data.js`, `dashboard/` (including a generated `evidence.json` with the ledger, both models with their held-out tests, the top rows and the top farm plans, so the dossier carries real numbers), `screenshots/` and `dossier.json` to the output directory. Open `out/dashboard/index.html` to use the board; it needs `data.js` beside `dashboard/`.
 
 ## Layout
 
 - `main.ts` — the entrypoint: reads the snapshot, scores the board, writes the output.
-- `lib/model.ts` — the radar-2 model, the calibration, the farm plans and the gate checks.
+- `lib/model.ts` — the radar-3 model, the odds and value fits, the ledger, the farm plans and the gate checks.
 - `vendor/makefun-board.ts` — make.fun's dossier library, vendored byte for byte from the kit.
 - `dashboard/` — the static page: `index.html`, `app.css`, `app.js`.
 - `screenshots/` — the board, a protocol detail view, a filtered view and the model panel, captured from this dashboard.
