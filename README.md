@@ -4,7 +4,7 @@
 [![rank](https://make.fun/badge/token-radar-01/Rahadian1702/token-radar-01-entry/rank.svg)](https://make.fun/bounty/token-radar-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
 [![reward](https://make.fun/badge/token-radar-01/Rahadian1702/token-radar-01-entry/reward.svg)](https://make.fun/bounty/token-radar-01?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
 
-A token launch radar: every pre-token protocol in the sealed DefiLlama snapshot, ranked by an implied value calibrated on the market caps of live tokens in the same category, with a concrete farm plan for each one. The board covers the whole 40-protocol watchlist plus 160 early pre-token protocols below the $50M floor, and the dashboard is a static page that renders with no network.
+A token launch radar: every genuine pre-token protocol in the sealed DefiLlama snapshot, ranked by an implied value calibrated on the market caps of live tokens in the same category, with a concrete farm plan for each one. The board covers the whole 40-protocol watchlist plus 138 early pre-token protocols below the $50M floor and 19 above it that the watchlist leaves out — wrapped, staked and bridged products are excluded, since they have no token launch to rank — and the dashboard is a static page that renders with no network.
 
 ## The model (radar-2)
 
@@ -24,7 +24,7 @@ Growth is the protocol's seven-day TVL change; age is the time since it was firs
 mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts --input /path/to/snapshot.json
 ```
 
-Node 22 or later, standard library only, no install. The program writes `board.json` (200 ranked rows), `data.js`, `dashboard/`, `screenshots/` and `dossier.json` to the output directory. Open `out/dashboard/index.html` to use the board; it needs `data.js` beside `dashboard/`.
+Node 22 or later, standard library only, no install. The program writes `board.json` (197 ranked rows), `data.js`, `dashboard/` (including a generated `evidence.json` with the calibration, the top rows and the top farm plans, so the dossier carries real numbers), `screenshots/` and `dossier.json` to the output directory. Open `out/dashboard/index.html` to use the board; it needs `data.js` beside `dashboard/`.
 
 ## Layout
 
@@ -32,7 +32,7 @@ Node 22 or later, standard library only, no install. The program writes `board.j
 - `lib/model.ts` — the radar-2 model, the calibration, the farm plans and the gate checks.
 - `vendor/makefun-board.ts` — make.fun's dossier library, vendored byte for byte from the kit.
 - `dashboard/` — the static page: `index.html`, `app.css`, `app.js`.
-- `screenshots/` — the board, a protocol detail view and a filtered view, captured from this dashboard.
+- `screenshots/` — the board, a protocol detail view, a filtered view and the model panel, captured from this dashboard.
 
 ---
 
