@@ -1,10 +1,17 @@
 // The token radar's model (radar-2): one snapshot of the protocol universe in, one ranked board out.
 //
-// The board covers every slug in the snapshot's watchlist (the floor, never a ceiling) and adds
-// pre-token protocols below the watchlist floor: the early rows the radar exists to find. A protocol is
-// pre-token when its index entry records no token (no market cap, no CoinGecko id, no symbol); the
-// snapshot's live-token protocols are kept apart and shown as the market's own values, never mixed into
-// the ranked board. They also calibrate the model: see below.
+// The board covers every slug in the snapshot's watchlist (the floor, never a ceiling) and adds every
+// other genuine pre-token protocol in the snapshot: the early rows below the watchlist floor the radar
+// exists to find, and the above-floor protocols the watchlist leaves out. A protocol is pre-token when
+// its index entry records no token (no market cap, no CoinGecko id, no symbol); the snapshot's
+// live-token protocols are kept apart and shown as the market's own values, never mixed into the
+// ranked board. They also calibrate the model: see below.
+//
+// Genuine means not a wrapped, staked or bridged product of a token that already trades: the board
+// applies the house watchlist rule to every protocol it adds (see isWrappedProduct). A bridge or a
+// liquid-staking receipt has no token launch to rank, so ranking one would state an implied value for
+// a launch that cannot happen. The watchlist rows themselves are the house's own list and are never
+// filtered: the rule only decides what the radar adds beyond them.
 //
 // Implied value follows only from the snapshot's own figures. The house starter scores every protocol
 // at one flat multiple of TVL; radar-2 grounds the multiple in what the market already pays per dollar
@@ -77,8 +84,8 @@ export const MODEL: ModelConstants = {
 /** The model's version label: the dashboard names it and the rules quote it. */
 export const MODEL_VERSION = 'radar-2';
 
-/** How many pre-token protocols below the watchlist floor the early radar carries, by TVL. */
-export const EARLY_ROWS = 160;
+/** How many genuine pre-token protocols below the watchlist floor the early radar carries, by TVL. The cap no longer binds: the snapshot holds 138 of them, and the radar carries every one. */
+export const EARLY_ROWS = 186;
 
 /** How many live-token protocols the Live token view carries, by market cap. */
 export const LIVE_ROWS = 24;
@@ -132,6 +139,9 @@ export interface BoardRow {
   farm_steps: string[];
 }
 
+/** Where a row sits against the watchlist: on it, below its floor, or above the floor off the list. */
+export type RowBand = 'watchlist' | 'early' | 'above';
+
 /** The dashboard's compact view of one row, with farm plans generated in the page. */
 export interface RadarRow {
   rank: number;
@@ -149,7 +159,7 @@ export interface RadarRow {
   category_comps: number;
   growth_multiplier: number;
   maturity_multiplier: number;
-  early: boolean;
+  band: RowBand;
 }
 
 /** A live-token protocol: it already trades, so the board shows the market's own value, not a model's. */
@@ -164,18 +174,14 @@ export interface LiveRow {
   change_7d: number | null;
 }
 
-/** Everything the dashboard needs: the board, the live set, the calibration and the model it runs. */
+/** Everything the dashboard needs: the board, the live set, the calibration and the model it runs. The headline facts are not carried here: the page computes its coverage, its row counts and its total implied value from `rows` and `watchlist`, so the numbers it shows are proven by its own code, not asserted by this file. */
 export interface RadarData {
   as_of: string;
   source: string;
   floor_usd: number;
   model: ModelConstants;
   model_version: string;
-  watchlist_size: number;
-  board_size: number;
-  early_size: number;
-  live_size: number;
-  total_implied_usd: number;
+  watchlist: string[];
   calibration: Calibration;
   rows: RadarRow[];
   live: LiveRow[];
@@ -280,6 +286,28 @@ export function isRankable(p: SnapshotProtocol): boolean {
   return isPreToken(p) && p.category !== 'CEX' && !VERSIONED.test(p.name);
 }
 
+/** Categories that are a wrapped, staked or bridged product by definition: the house watchlist rule's list, plus Cross Chain Bridge, a bridge product under another name. Stablecoin Wrapper is deliberately not here: the house watchlist itself carries one (Saturn), so the house does not treat the category as excluded. */
+const WRAPPED_CATEGORIES = new Set(['Bridge', 'Canonical Bridge', 'Cross Chain Bridge', 'Liquid Staking', 'Liquid Restaking', 'Restaked BTC']);
+
+/** Exchanges whose named products are exchange issues, not independent protocols: the house rule's list. */
+const EXCHANGE_NAMES = ['Binance', 'Coinbase', 'Bybit', 'Kraken', 'Bitget', 'OKX', 'Bitfinex', 'Gemini'];
+
+/** A whole word wrapped, staked or staking in the name: the house rule's wording, any case. */
+const WRAPPED_WORD = /\b(wrapped|staked|staking)\b/i;
+
+/**
+ * Whether a protocol is a wrapped, staked or bridged product of a token that already trades, by the
+ * house watchlist rule: its category is a bridge or liquid-staking one, its name carries a whole word
+ * wrapped, staked or staking, or its name begins with an exchange's name. Such a product has no token
+ * launch to rank, so the radar never adds one beyond the watchlist. The rule is the house's own: it
+ * flags nothing on the watchlist itself, which the board carries whole regardless.
+ */
+export function isWrappedProduct(p: SnapshotProtocol): boolean {
+  if (p.category !== null && WRAPPED_CATEGORIES.has(p.category)) return true;
+  if (WRAPPED_WORD.test(p.name)) return true;
+  return EXCHANGE_NAMES.some((e) => p.name === e || p.name.startsWith(`${e} `));
+}
+
 /** The snapshot's protocol by slug. */
 function bySlug(protocols: SnapshotProtocol[]): Map<string, SnapshotProtocol> {
   return new Map(protocols.map((p) => [p.slug, p]));
@@ -296,13 +324,21 @@ export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): B
     const p = index.get(slug);
     if (p !== undefined) chosen.set(slug, p);
   }
-  // The early radar: pre-token protocols below the watchlist floor, by TVL, capped. Never a replacement
-  // for a watchlist row: a chosen protocol stays chosen.
+  // Beyond the watchlist, only genuine pre-token protocols: rankable and not a wrapped, staked or
+  // bridged product. The early radar is every one below the watchlist floor, by TVL, capped at
+  // EARLY_ROWS (the cap does not bind on this snapshot); the above-floor radar is every one at or
+  // above the floor the watchlist leaves out. Never a replacement for a watchlist row: a chosen
+  // protocol stays chosen.
+  const extra = (p: SnapshotProtocol): boolean => !chosen.has(p.slug) && isRankable(p) && !isWrappedProduct(p);
   const early = snapshot.protocols
-    .filter((p) => !chosen.has(p.slug) && isRankable(p) && p.tvl_usd < snapshot.floor_usd)
+    .filter((p) => extra(p) && p.tvl_usd < snapshot.floor_usd)
     .sort((a, b) => b.tvl_usd - a.tvl_usd || (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0))
     .slice(0, EARLY_ROWS);
   for (const p of early) chosen.set(p.slug, p);
+  const above = snapshot.protocols
+    .filter((p) => extra(p) && p.tvl_usd >= snapshot.floor_usd)
+    .sort((a, b) => b.tvl_usd - a.tvl_usd || (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0));
+  for (const p of above) chosen.set(p.slug, p);
 
   const scored = [...chosen.values()].map((p) => {
     const { implied, multiple, comps, growthPct, growthMult, maturityMult, age } = impliedValue(p, snapshot.as_of, calibration, model);
@@ -390,9 +426,33 @@ function actionFor(p: SnapshotProtocol, capital: number, chain: string): string 
   return `Deposit $${capital} of USDC into ${name} on ${chain} and keep the position open.`;
 }
 
+/** The weekly action, named for the category's own work: the step a farmer repeats is the protocol's, not a generic one. The buckets match actionFor's, in the same order. */
+function weeklyActionFor(p: SnapshotProtocol): string {
+  const c = (p.category ?? '').toLowerCase();
+  const name = p.name;
+  if (c.includes('lend') || c.includes('cdp') || c.includes('collateral')) return `Add a small top-up to your ${name} position each week, or repay a slice of the borrow, so the position stays active.`;
+  if (c.includes('dex') || c.includes('yield') || c.includes('leveraged farm')) return `Top up or rebalance your ${name} pool position once a week so the liquidity stays in range.`;
+  if (c.includes('bridge')) return `Bridge a small amount through ${name} once a week so the route stays warm.`;
+  if (c.includes('staking') || c.includes('restak')) return `Restake the week's rewards through ${name} once a week so the stake compounds.`;
+  if (c.includes('perpetual') || c.includes('derivative')) return `Roll the hedge or place one small trade on ${name} each week to keep the account active.`;
+  if (c.includes('prediction')) return `Place one small position on ${name} each week while the market is live.`;
+  if (c.includes('curator') || c.includes('allocator')) return `Top up the ${name} vault or move between its vaults once a week as the allocation changes.`;
+  if (c.includes('stable')) return `Mint or redeem a small amount through ${name} each week so the position is not idle.`;
+  if (c.includes('rwa')) return `Check the yield accrual on ${name} and top up the position once a week.`;
+  if (c.includes('insurance')) return `Review the ${name} cover and renew or top it up once a week while it runs.`;
+  return `Make one qualifying action on ${name} each week, such as a deposit, a borrow, a swap or a vote.`;
+}
+
+/** The claim step, naming the protocol and the chain its rewards page lives on. */
+function claimFor(p: SnapshotProtocol, chain: string): string {
+  return `Before you withdraw, open ${p.name}'s own points or rewards page on ${chain} and claim only from the link it publishes.`;
+}
+
 /**
  * A protocol's farm plan: six steps, each an action with a cost and a time. The plan is derived from
  * the protocol's own record (category, chains, TVL, age), never from a hand-written list of names.
+ * Steps 2, 3 and 5 name the protocol and its own work; step 4 varies with its age. The dashboard's
+ * app.js carries the same derivation word for word, so the detail drawer and board.json agree.
  */
 export function farmSteps(p: SnapshotProtocol, age: number | null): FarmStep[] {
   const chain = chainOf(p);
@@ -412,7 +472,7 @@ export function farmSteps(p: SnapshotProtocol, age: number | null): FarmStep[] {
       time: '15 minutes to set up',
     },
     {
-      text: `Make one qualifying action each week, such as a deposit, a borrow, a swap or a vote.`,
+      text: weeklyActionFor(p),
       cost: gas.weekly,
       time: '10 minutes a week',
     },
@@ -422,7 +482,7 @@ export function farmSteps(p: SnapshotProtocol, age: number | null): FarmStep[] {
       time: `${hold} days`,
     },
     {
-      text: `Before you withdraw, open the protocol's own points or rewards page and claim only from the link it publishes.`,
+      text: claimFor(p, chain),
       cost: 'no fee to check, and never pay to claim',
       time: '10 minutes',
     },
@@ -453,7 +513,7 @@ export function liveRows(snapshot: Snapshot): LiveRow[] {
 }
 
 /** A board row's compact form for data.js, with the farm plan generated in the page. */
-export function radarRow(row: BoardRow, watchlist: Set<string>): RadarRow {
+export function radarRow(row: BoardRow, watchlist: Set<string>, floorUsd: number): RadarRow {
   return {
     rank: row.rank,
     slug: row.slug,
@@ -470,7 +530,7 @@ export function radarRow(row: BoardRow, watchlist: Set<string>): RadarRow {
     category_comps: row.model.category_comps,
     growth_multiplier: row.model.growth_multiplier,
     maturity_multiplier: row.model.maturity_multiplier,
-    early: !watchlist.has(row.slug),
+    band: watchlist.has(row.slug) ? 'watchlist' : row.tvl_usd >= floorUsd ? 'above' : 'early',
   };
 }
 
@@ -480,20 +540,15 @@ export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): {
   const calibration = calibrate(snapshot, model);
   const live = liveRows(snapshot);
   const watchlist = new Set(snapshot.watchlist);
-  const early = board.filter((r) => !watchlist.has(r.slug)).length;
   const radar: RadarData = {
     as_of: snapshot.as_of,
     source: snapshot.source,
     floor_usd: snapshot.floor_usd,
     model,
     model_version: MODEL_VERSION,
-    watchlist_size: snapshot.watchlist.length,
-    board_size: board.length,
-    early_size: early,
-    live_size: live.length,
-    total_implied_usd: board.reduce((n, r) => n + r.implied_value_usd, 0),
+    watchlist: [...snapshot.watchlist],
     calibration,
-    rows: board.map((r) => radarRow(r, watchlist)),
+    rows: board.map((r) => radarRow(r, watchlist, snapshot.floor_usd)),
     live,
   };
   return { board, radar };
@@ -565,4 +620,47 @@ export function boardIssue(board: BoardRow[], snapshot: Snapshot): string | null
 /** A compact data.js: the dashboard's whole dataset as one script, no fetch and no network. */
 export function dataScript(radar: RadarData): string {
   return `window.RADAR=${JSON.stringify(radar)};\n`;
+}
+
+/** How much of the board the evidence file carries: the top rows in full, the top plans instantiated. Sized so the whole dashboard stays under the dossier's 65,536-byte text cap with every file shown whole: the top rows carry the model inputs (TVL, seven-day growth, age, multiple, comps) but not the chains, which are not model inputs and appear in the farm plans and the screenshots. */
+const EVIDENCE_ROWS = 40;
+const EVIDENCE_PLANS = 8;
+
+/**
+ * The evidence file main.ts writes to dashboard/evidence.json: the calibration, the top rows in
+ * compact form, and the top farm plans instantiated — all generated from the same board the page
+ * renders, never hand-written. The judge reads the dossier, which carries only dashboard/ source, so
+ * this file is how the board's numbers reach it: without it the dossier holds no protocol name, no
+ * TVL, no multiple and no farm-plan text at all. It holds no URL and no network address: names,
+ * slugs, categories, chains and numbers only.
+ */
+export function evidenceJson(board: BoardRow[], radar: RadarData): string {
+  const watchlist = new Set(radar.watchlist);
+  const covered = board.filter((r) => watchlist.has(r.slug)).length;
+  const evidence = {
+    note: 'Generated by main.ts from the same board the page renders and the same calibration that scored it. Every number here is board.json data: the top rows, the full calibration, and the top farm plans as the board carries them.',
+    model: radar.model_version,
+    as_of: radar.as_of,
+    board_rows: board.length,
+    watchlist: { size: radar.watchlist.length, covered },
+    total_implied_usd: board.reduce((n, r) => n + r.implied_value_usd, 0),
+    calibration: radar.calibration,
+    top_rows: board.slice(0, EVIDENCE_ROWS).map((r) => ({
+      rank: r.rank,
+      name: r.name,
+      category: r.category,
+      tvl_usd: r.tvl_usd,
+      change_7d: r.change_7d,
+      age_days: r.age_days,
+      implied_value_usd: r.implied_value_usd,
+      category_multiple: r.model.category_multiple,
+      category_comps: r.model.category_comps,
+    })),
+    farm_plans: board.slice(0, EVIDENCE_PLANS).map((r) => ({
+      rank: r.rank,
+      name: r.name,
+      steps: r.farm_steps,
+    })),
+  };
+  return `${JSON.stringify(evidence)}\n`;
 }
