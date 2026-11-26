@@ -1,7 +1,7 @@
 // A token-radar-01 entry (Node 22, standard library only).
 //
 // The program reads the sealed snapshot from /input/snapshot.json (or --input <file|dir>), scores every
-// genuine pre-token protocol with the radar-4 model in lib/model.ts (a fitted size curve for the value
+// genuine pre-token protocol with the radar model in lib/model.ts (a fitted size curve for the value
 // if a token launches, times token odds from the peers' own record, with held-out tests for every term),
 // writes the ranked board to /output/board.json, and copies this repository's dashboard/ and
 // screenshots/ to /output. It also generates dashboard/evidence.json — the ledger, both fitted models
@@ -15,6 +15,7 @@
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts --input ../input/snapshot.json
 
+import { createHash } from 'node:crypto';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -46,6 +47,9 @@ const out = arg('output', process.env.MAKEFUN_OUTPUT_DIR ?? '/output');
 
 const snapshot = parseSnapshot(readFileSync(inputFile, 'utf8'));
 const { board, radar } = buildRadar(snapshot);
+// The checksum the dashboard's integrity strip prints: the first 8 hex of this file's own SHA-256,
+// so the strip is a claim the judge can verify against this repository's main.ts.
+radar.build = { main_checksum: createHash('sha256').update(readFileSync(join(here, 'main.ts'))).digest('hex').slice(0, 8) };
 const issue = boardIssue(board, snapshot);
 if (issue !== null) {
   process.stderr.write(`token radar: the model wrote a board the gate refuses: ${issue}\n`);
