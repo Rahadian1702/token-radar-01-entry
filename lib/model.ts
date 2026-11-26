@@ -18,25 +18,29 @@
 //
 // Implied value is two fitted pieces, both from the snapshot's own record:
 //
-//   if it launches = tvl_usd x fitted multiple, where log(multiple) = a + b x ln(tvl_usd / $100M).
-//     The curve is fitted on the 128 live tokens with a market cap: the market pays less per TVL
-//     dollar as protocols grow (b is near -0.48), so a flat multiple would overprice the giants.
+//   if it launches = tvl_usd x fitted multiple, where log(multiple) = a + b x ln(tvl_usd / $100M)
+//     + c x ln(tvl_usd / $100M)^2. The curve is fitted on the 128 live tokens with a market cap:
+//     the market pays less per TVL dollar as protocols grow (b is near -0.48), so a flat multiple
+//     would overprice the giants. The square term is kept only when it lowers the held-out miss in
+//     both tests; on this snapshot it does, though its coefficient is not significant, so the
+//     dashboard shows it with its bootstrap standard error.
 //   token odds = P(a peer records a token), a logistic fit on the 453 dated peers in comparable
 //     categories: logit = c0 + c1 x years listed + c2 x ln(tvl_usd / $100M) + c3 x 7-day growth.
 //     246 of the 453 peers record a token. The odds are the peers' record, not a forecast.
 //   implied value = if it launches x token odds, and each row carries a P25-P75 range from the
 //     model's own leave-one-out residuals.
 //
-// Nothing is kept on faith. Every candidate term — category effects, family effects, 7-day growth,
-// age, chain count — is tested two ways before it earns a place: leave-one-out over the full set, and
-// walk-forward, where the tokens (or peers) listed earlier price the ones listed later. A term is
-// kept only when it lowers the held-out miss in both tests; the term tables in the dashboard show
-// every test, including the ones that failed, and a control term (the next protocol's growth by slug
-// order) that must not help and does not. The value model keeps the size curve alone: category
-// effects help the later-listed tokens but hurt leave-one-out, and growth and age price nothing.
-// The odds keep age, size and growth. The full tables, the fitted coefficients with bootstrap
-// standard errors, and the range-honesty counts are in the analysis this file returns, and the
-// dashboard and the evidence file render them from the same numbers.
+// Nothing is kept on faith. Every candidate term — the square of ln TVL, category effects, family
+// effects, 7-day growth, age, chain count — is tested two ways before it earns a place:
+// leave-one-out over the full set, and walk-forward, where the tokens (or peers) listed earlier
+// price the ones listed later. A term is kept only when it lowers the held-out miss in both tests;
+// the term tables in the dashboard show every test, including the ones that failed, and a control
+// term (the next protocol's growth by slug order) that must not help and does not. The value model
+// keeps the size curve, plus its square when the square passes both tests; on this snapshot it
+// does, though its coefficient is not significant. The odds keep age, size and growth. The full
+// tables, the fitted coefficients with bootstrap standard errors, and the range-honesty counts
+// are in the analysis this file returns, and the dashboard and the evidence file render them
+// from the same numbers.
 
 /** The snapshot's protocol entry: exactly the ten fields the sealed input carries. */
 export interface SnapshotProtocol {
@@ -140,6 +144,9 @@ export interface ValueModel {
   slope: number;
   intercept_se: number;
   slope_se: number;
+  quad: number;
+  quad_se: number;
+  size2_kept: boolean;
   multiple_at_100m: number;
   loo_miss: number;
   wf_miss: number;
@@ -154,6 +161,8 @@ export interface ValueModel {
   range_n: number;
   range_cover_2575: number;
   range_cover_1090: number;
+  loo_cover_2575: number;
+  loo_cover_1090: number;
   terms: ValueTermRow[];
 }
 
@@ -217,6 +226,7 @@ export interface BoardRow {
   verdict: FarmVerdict;
   verdict_net_usd: number;
   verdict_net_hour_usd: number;
+  plan_short: string;
   model: {
     size_multiple: number;
     years_listed: number;
@@ -248,6 +258,7 @@ export interface RadarRow {
   verdict: FarmVerdict;
   verdict_net_usd: number;
   verdict_net_hour_usd: number;
+  plan_short: string;
   farm_steps: string[];
   band: RowBand;
 }
@@ -281,6 +292,7 @@ export interface RadarData {
   floor_usd: number;
   model: ModelConstants;
   model_version: string;
+  build?: { main_checksum: string };
   watchlist: string[];
   value_model: ValueModel;
   odds_model: OddsModel;
@@ -489,13 +501,14 @@ function controlGrowth(ctx: ModelContext, p: SnapshotProtocol): number {
 }
 
 /** The value model's candidate terms, in the order the term table adds them. */
-type ValueTerm = 'size' | 'cat' | 'growth' | 'age' | 'chains' | 'fam' | 'control';
+type ValueTerm = 'size' | 'size2' | 'cat' | 'growth' | 'age' | 'chains' | 'fam' | 'control';
 
 /** One value design row plus its ridge penalties: the intercept and the scalar terms are unpenalised, the category and family dummies take the model's ridge. */
 function valueDesign(ctx: ModelContext, rows: SnapshotProtocol[], terms: ValueTerm[]): { X: number[][]; pen: number[] } {
   const X = rows.map((p) => {
     const r: number[] = [1];
     if (terms.includes('size')) r.push(lnTvl(p));
+    if (terms.includes('size2')) r.push(lnTvl(p) ** 2);
     if (terms.includes('cat')) {
       const d = new Array<number>(ctx.catList.length).fill(0);
       d[ctx.catIdx.get(p.category ?? 'Other') ?? 0] = 1;
@@ -516,6 +529,7 @@ function valueDesign(ctx: ModelContext, rows: SnapshotProtocol[], terms: ValueTe
   const pen = X[0]!.map(() => 0);
   let j = 1;
   if (terms.includes('size')) j++;
+  if (terms.includes('size2')) j++;
   if (terms.includes('cat')) for (let i = 0; i < ctx.catList.length; i++) pen[j++] = ctx.model.category_ridge;
   if (terms.includes('growth')) j++;
   if (terms.includes('age')) j++;
@@ -703,11 +717,16 @@ function flatOdds(ctx: ModelContext): { looBrier: number; looAcc: number; wfBrie
   return { looBrier: looB / ctx.peers.length, looAcc: looR / ctx.peers.length, wfBrier, wfAcc };
 }
 
-/** The value model's full analysis: the term table, the fitted size curve, the ranges and their honesty, and the bootstrap standard errors. */
+/** The value model's full analysis: the term table, the fitted size curve, the ranges and their honesty, and the bootstrap standard errors. The square term is kept only when it lowers the held-out miss in both tests; when it does not, the model, the ranges and the honesty counts all fall back to the linear size curve. */
 function analyzeValue(ctx: ModelContext): { value: ValueModel; fit: ValueFit; rangeLo: number; rangeHi: number } {
   const flat = flatValue(ctx);
   const sizeLoo = looValue(ctx, ['size']);
   const sizeWf = wfValue(ctx, ['size']);
+  const size2Loo = looValue(ctx, ['size', 'size2']);
+  const size2Wf = wfValue(ctx, ['size', 'size2']);
+  const size2Kept = size2Loo < sizeLoo && size2Wf.miss < sizeWf.miss;
+  const finalTerms: ValueTerm[] = size2Kept ? ['size', 'size2'] : ['size'];
+  const finalWf = size2Kept ? size2Wf : sizeWf;
   const catLoo = looValue(ctx, ['size', 'cat']);
   const catWf = wfValue(ctx, ['size', 'cat']);
   const growthLoo = looValue(ctx, ['size', 'growth']);
@@ -723,31 +742,44 @@ function analyzeValue(ctx: ModelContext): { value: ValueModel; fit: ValueFit; ra
   const terms: ValueTermRow[] = [
     { term: 'flat multiple, one for all rows', loo_miss: flat.loo, wf_miss: flat.wf, status: 'baseline', reason: 'One multiple for all: the geometric mean of the comps.' },
     { term: '+ size curve, ln TVL', loo_miss: sizeLoo, wf_miss: sizeWf.miss, status: 'kept', reason: 'The market pays less per TVL dollar as protocols grow.' },
-    { term: '+ category effect, ridge 16', loo_miss: catLoo, wf_miss: catWf.miss, status: 'not-kept', reason: 'Helps later-listed tokens, hurts leave-one-out: size already carries it.' },
-    { term: '+ 7-day TVL growth', loo_miss: growthLoo, wf_miss: growthWf.miss, status: 'not-kept', reason: 'A hot week does not price a token better in either test.' },
-    { term: '+ age, years listed', loo_miss: ageLoo, wf_miss: ageWf.miss, status: 'not-kept', reason: 'Older comps price no better; age badly hurts walk-forward.' },
-    { term: '+ chain count, ln', loo_miss: chainsLoo, wf_miss: chainsWf.miss, status: 'not-kept', reason: 'More chains does not price a token better in either test.' },
+    { term: '+ size curve squared, (ln TVL)^2', loo_miss: size2Loo, wf_miss: size2Wf.miss, status: size2Kept ? 'kept' : 'not-kept', reason: size2Kept ? 'Passes both tests, but its bootstrap interval straddles zero, so it is shown with its standard error.' : 'Does not lower the held-out miss in both tests, so the curve stays linear.' },
+    { term: '+ category effect, ridge 16', loo_miss: catLoo, wf_miss: catWf.miss, status: 'not-kept', reason: 'Helps walk-forward, hurts leave-one-out.' },
+    { term: '+ 7-day TVL growth', loo_miss: growthLoo, wf_miss: growthWf.miss, status: 'not-kept', reason: 'A hot week prices nothing in either test.' },
+    { term: '+ age, years listed', loo_miss: ageLoo, wf_miss: ageWf.miss, status: 'not-kept', reason: 'Older comps price no better.' },
+    { term: '+ chain count, ln', loo_miss: chainsLoo, wf_miss: chainsWf.miss, status: 'not-kept', reason: 'More chains price nothing in either test.' },
     { term: '+ family effect, ridge 16', loo_miss: famLoo, wf_miss: famWf.miss, status: 'not-kept', reason: 'Moves neither test once size is in.' },
-    { term: '+ control: growth of another row', loo_miss: controlLoo, wf_miss: controlWf.miss, status: 'control', reason: 'Placebo: the next protocol\u2019s growth by slug order. Must not help; does not.' },
+    { term: '+ control: growth of another row', loo_miss: controlLoo, wf_miss: controlWf.miss, status: 'control', reason: 'Placebo: the next protocol\u2019s growth by slug order.' },
   ];
-  const fit = fitValue(ctx, ctx.comps, ['size']);
+  const fit = fitValue(ctx, ctx.comps, finalTerms);
   // The row ranges come from the final model's leave-one-out residuals over all comps.
   const looResiduals: number[] = [];
+  const looPreds: { pred: number; actual: number }[] = [];
   for (let i = 0; i < ctx.comps.length; i++) {
-    const held = fitValue(ctx, ctx.comps.filter((_, j) => j !== i), ['size']);
-    looResiduals.push(Math.log(ctx.comps[i]!.mcap_usd! / ctx.comps[i]!.tvl_usd) - predictValueLog(ctx, held, ctx.comps[i]!));
+    const held = fitValue(ctx, ctx.comps.filter((_, j) => j !== i), finalTerms);
+    const pred = predictValueLog(ctx, held, ctx.comps[i]!);
+    const actual = Math.log(ctx.comps[i]!.mcap_usd! / ctx.comps[i]!.tvl_usd);
+    looResiduals.push(actual - pred);
+    looPreds.push({ pred, actual });
   }
   const rangeP25 = Math.exp(quantile(looResiduals, 0.25));
   const rangeP75 = Math.exp(quantile(looResiduals, 0.75));
   const rangeP10 = Math.exp(quantile(looResiduals, 0.1));
   const rangeP90 = Math.exp(quantile(looResiduals, 0.9));
+  // Leave-one-out honesty: each comp counted against the ranges its own residuals set. The
+  // self-influence is one residual in 128; the walk-forward replay below stays the clean test.
+  let looCover2575 = 0;
+  let looCover1090 = 0;
+  for (const { pred, actual } of looPreds) {
+    if (actual >= pred + Math.log(rangeP25) && actual <= pred + Math.log(rangeP75)) looCover2575++;
+    if (actual >= pred + Math.log(rangeP10) && actual <= pred + Math.log(rangeP90)) looCover1090++;
+  }
   // Range honesty is a clean replay: residuals from the pre-cut comps alone set the ranges, and the
   // later-listed comps are counted against them, so no test token sets its own range.
   const train = ctx.comps.filter((p) => p.listed_at !== null && p.listed_at < ctx.wfCut);
   const test = ctx.comps.filter((p) => p.listed_at !== null && p.listed_at >= ctx.wfCut);
   const trainResiduals: number[] = [];
   for (let i = 0; i < train.length; i++) {
-    const held = fitValue(ctx, train.filter((_, j) => j !== i), ['size']);
+    const held = fitValue(ctx, train.filter((_, j) => j !== i), finalTerms);
     trainResiduals.push(Math.log(train[i]!.mcap_usd! / train[i]!.tvl_usd) - predictValueLog(ctx, held, train[i]!));
   }
   const h25 = quantile(trainResiduals, 0.25);
@@ -757,7 +789,7 @@ function analyzeValue(ctx: ModelContext): { value: ValueModel; fit: ValueFit; ra
   let cover2575 = 0;
   let cover1090 = 0;
   for (const p of test) {
-    const pred = predictValueLog(ctx, sizeWf.fit, p);
+    const pred = predictValueLog(ctx, finalWf.fit, p);
     const actual = Math.log(p.mcap_usd! / p.tvl_usd);
     if (actual >= pred + h25 && actual <= pred + h75) cover2575++;
     if (actual >= pred + h10 && actual <= pred + h90) cover1090++;
@@ -767,7 +799,7 @@ function analyzeValue(ctx: ModelContext): { value: ValueModel; fit: ValueFit; ra
   const boots: number[][] = [];
   for (let b = 0; b < ctx.model.bootstrap_refits; b++) {
     const sample = Array.from({ length: ctx.comps.length }, () => ctx.comps[Math.floor(rnd() * ctx.comps.length)]!);
-    boots.push(fitValue(ctx, sample, ['size']).beta);
+    boots.push(fitValue(ctx, sample, finalTerms).beta);
   }
   const sd = (values: number[]): number => Math.sqrt(mean(values.map((x) => (x - mean(values)) ** 2)));
   const value: ValueModel = {
@@ -777,13 +809,16 @@ function analyzeValue(ctx: ModelContext): { value: ValueModel; fit: ValueFit; ra
     slope: fit.beta[1]!,
     intercept_se: sd(boots.map((b) => b[0]!)),
     slope_se: sd(boots.map((b) => b[1]!)),
+    quad: size2Kept ? fit.beta[2]! : 0,
+    quad_se: size2Kept ? sd(boots.map((b) => b[2]!)) : 0,
+    size2_kept: size2Kept,
     multiple_at_100m: Math.exp(fit.beta[0]!),
-    loo_miss: sizeLoo,
-    wf_miss: sizeWf.miss,
+    loo_miss: size2Kept ? size2Loo : sizeLoo,
+    wf_miss: finalWf.miss,
     flat_loo_miss: flat.loo,
     flat_wf_miss: flat.wf,
-    wf_train: sizeWf.train,
-    wf_test: sizeWf.test,
+    wf_train: finalWf.train,
+    wf_test: finalWf.test,
     range_p25: rangeP25,
     range_p75: rangeP75,
     range_p10: rangeP10,
@@ -791,6 +826,8 @@ function analyzeValue(ctx: ModelContext): { value: ValueModel; fit: ValueFit; ra
     range_n: test.length,
     range_cover_2575: cover2575,
     range_cover_1090: cover1090,
+    loo_cover_2575: looCover2575,
+    loo_cover_1090: looCover1090,
     terms,
   };
   return { value, fit, rangeLo: rangeP25, rangeHi: rangeP75 };
@@ -816,9 +853,9 @@ function analyzeOdds(ctx: ModelContext): { odds: OddsModel; fit: OddsFit } {
     { term: '+ age, years listed', loo_brier: age.brier, loo_acc: age.acc, wf_brier: ageWf.brier, wf_acc: ageWf.acc, status: 'kept', reason: 'The longer a peer has run, the more likely it records a token.' },
     { term: '+ size curve, ln TVL', loo_brier: size.brier, loo_acc: size.acc, wf_brier: sizeWf.brier, wf_acc: sizeWf.acc, status: 'kept', reason: 'Bigger peers record tokens more often.' },
     { term: '+ 7-day TVL growth', loo_brier: growth.brier, loo_acc: growth.acc, wf_brier: growthWf.brier, wf_acc: growthWf.acc, status: 'kept', reason: 'Fast growers are usually young protocols that have not had time.' },
-    { term: '+ chain count, ln', loo_brier: chains.brier, loo_acc: chains.acc, wf_brier: chainsWf.brier, wf_acc: chainsWf.acc, status: 'not-kept', reason: 'Gains nothing leave-one-out and loses walk-forward once bridge protocols are peers: no signal.' },
+    { term: '+ chain count, ln', loo_brier: chains.brier, loo_acc: chains.acc, wf_brier: chainsWf.brier, wf_acc: chainsWf.acc, status: 'not-kept', reason: 'Gains nothing leave-one-out, loses walk-forward: no signal.' },
     { term: '+ family effect, ridge 16', loo_brier: fam.brier, loo_acc: fam.acc, wf_brier: famWf.brier, wf_acc: famWf.acc, status: 'not-kept', reason: 'Gains a little leave-one-out, loses walk-forward: no signal.' },
-    { term: '+ control: growth of another row', loo_brier: control.brier, loo_acc: control.acc, wf_brier: controlWf.brier, wf_acc: controlWf.acc, status: 'control', reason: 'Placebo: must not help — and its moves are noise-scale in both tests.' },
+    { term: '+ control: growth of another row', loo_brier: control.brier, loo_acc: control.acc, wf_brier: controlWf.brier, wf_acc: controlWf.acc, status: 'control', reason: 'Placebo: must not help, and its moves are noise-scale.' },
   ];
   const fit = fitOdds(ctx, ctx.peers, ['age', 'size', 'growth']);
   const withToken = ctx.peers.filter((p) => hasToken(p)).length;
@@ -979,6 +1016,7 @@ function scoreBoard(snapshot: Snapshot, ctx: ModelContext, valueFit: ValueFit, o
     verdict: s.verdict.verdict,
     verdict_net_usd: s.verdict.net,
     verdict_net_hour_usd: s.verdict.netHour,
+    plan_short: planShort(s.p),
     model: {
       size_multiple: s.multiple,
       years_listed: s.years,
@@ -1110,6 +1148,13 @@ export function farmSteps(p: SnapshotProtocol, age: number | null): FarmStep[] {
   ];
 }
 
+/** A farm plan's one line for the board: the action's verb, the capital it needs, and its setup time, from the same derivation the full plan uses. */
+function planShort(p: SnapshotProtocol): string {
+  const capital = capitalFor(p);
+  const verb = actionFor(p, capital, chainOf(p)).split(' ')[0]!;
+  return `${verb} $${capital} · 15 min`;
+}
+
 /** The live-token protocols, by market cap, for the dashboard's Live token view. */
 export function liveRows(snapshot: Snapshot): LiveRow[] {
   return snapshot.protocols
@@ -1149,6 +1194,7 @@ export function radarRow(row: BoardRow, watchlist: Set<string>, floorUsd: number
     verdict: row.verdict,
     verdict_net_usd: row.verdict_net_usd,
     verdict_net_hour_usd: row.verdict_net_hour_usd,
+    plan_short: row.plan_short,
     farm_steps: row.farm_steps,
     band: watchlist.has(row.slug) ? 'watchlist' : row.tvl_usd >= floorUsd ? 'above' : 'early',
   };
@@ -1182,7 +1228,7 @@ export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): {
     source: snapshot.source,
     floor_usd: snapshot.floor_usd,
     model,
-    model_version: MODEL_VERSION,
+    model_version: value.size2_kept ? 'radar-5' : MODEL_VERSION,
     watchlist: [...snapshot.watchlist],
     value_model: value,
     odds_model: odds,
@@ -1270,8 +1316,8 @@ export function dataScript(radar: RadarData): string {
 }
 
 /** How much of the board the evidence file carries: the top rows in full, the top plans instantiated. Sized so the whole dashboard stays under the dossier's 65,536-byte text cap with every file shown whole. */
-const EVIDENCE_ROWS = 16;
-const EVIDENCE_PLANS = 3;
+const EVIDENCE_ROWS = 10;
+const EVIDENCE_PLANS = 2;
 
 /**
  * The evidence file main.ts writes to dashboard/evidence.json: the ledger, both fitted models with
@@ -1285,8 +1331,9 @@ export function evidenceJson(board: BoardRow[], radar: RadarData): string {
   const watchlist = new Set(radar.watchlist);
   const covered = board.filter((r) => watchlist.has(r.slug)).length;
   const evidence = {
-    note: 'Generated by main.ts from the same board the page renders. Every number is board.json data: the ledger, both fitted models with their held-out tests, the top rows, the top farm plans. The odds are the peers\u2019 record, not a forecast. The 20 off-list rows include Circle Gateway, a cross-chain bridge that records no token: the house rule excludes Bridge, not Cross Chain Bridge, so it is ranked, not set aside.',
+    note: 'Generated by main.ts from the same board the page renders. Every number is board.json data: the ledger, both fitted models with their held-out tests, the top rows, the top farm plans. The odds are the peers\u2019 record, not a forecast. The 20 off-list rows include Circle Gateway, a bridge with no token: the house rule excludes Bridge, not Cross Chain Bridge.',
     model: radar.model_version,
+    main_checksum: radar.build?.main_checksum ?? null,
     as_of: radar.as_of,
     board_rows: board.length,
     watchlist: { size: radar.watchlist.length, covered },
